@@ -198,6 +198,9 @@ namespace GitHub.Runner.Worker
                 // Get the download info
                 var downloadInfos = await GetDownloadInfoAsync(executionContext, repositoryActions);
 
+                
+                var defaultAccessToken = executionContext.GetGitHubContext("token");
+
                 // Download each action
                 foreach (var action in repositoryActions)
                 {
@@ -212,7 +215,9 @@ namespace GitHub.Runner.Worker
                         throw new Exception($"Missing download info for {lookupKey}");
                     }
 
-                    await DownloadRepositoryActionAsync(executionContext, downloadInfo);
+                    var isPrivateAction = downloadInfo.Authentication != null && defaultAccessToken != downloadInfo.Authentication?.Token;
+
+                    await DownloadRepositoryActionAsync(executionContext, downloadInfo, isPrivateAction);
                 }
 
                 // More preparation based on content in the repository (action.yml)
@@ -756,7 +761,7 @@ namespace GitHub.Runner.Worker
             return actionDownloadInfos.Actions;
         }
 
-        private async Task DownloadRepositoryActionAsync(IExecutionContext executionContext, WebApi.ActionDownloadInfo downloadInfo)
+        private async Task DownloadRepositoryActionAsync(IExecutionContext executionContext, WebApi.ActionDownloadInfo downloadInfo, bool isPrivateAction)
         {
             Trace.Entering();
             ArgUtil.NotNull(executionContext, nameof(executionContext));
@@ -835,7 +840,7 @@ namespace GitHub.Runner.Worker
 
                 if (!useActionArchiveCache)
                 {
-                    await DownloadRepositoryArchive(executionContext, link, downloadInfo.Authentication?.Token, archiveFile);
+                    await DownloadRepositoryArchive(executionContext, link, downloadInfo.Authentication?.Token, archiveFile, isPrivateAction);
                 }
 
                 var stagingDirectory = Path.Combine(tempDirectory, "_staging");
@@ -1113,7 +1118,7 @@ namespace GitHub.Runner.Worker
             return new AuthenticationHeaderValue("Basic", base64EncodingToken);
         }
 
-        private async Task DownloadRepositoryArchive(IExecutionContext executionContext, string downloadUrl, string downloadAuthToken, string archiveFile)
+        private async Task DownloadRepositoryArchive(IExecutionContext executionContext, string downloadUrl, string downloadAuthToken, string archiveFile, bool isPrivateAction)
         {
             Trace.Info($"Save archive '{downloadUrl}' into {archiveFile}.");
             int retryCount = 0;
@@ -1154,7 +1159,7 @@ namespace GitHub.Runner.Worker
                                         break;
                                     }
                                 }
-                                else if (response.StatusCode == HttpStatusCode.NotFound)
+                                else if (response.StatusCode == HttpStatusCode.NotFound && !isPrivateAction)
                                 {
                                     // It doesn't make sense to retry in this case, so just stop
                                     throw new ActionNotFoundException(new Uri(downloadUrl), requestId);
